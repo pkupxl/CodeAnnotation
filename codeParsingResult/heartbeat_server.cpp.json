@@ -1,0 +1,104 @@
+{
+	"AcceptConn":{
+		"body":"static void AcceptConn(int epollFd, int events, void* arg, void** releasedConnPtr)\r\n{\r\n    *releasedConnPtr = NULL;\r\n    PurePort* port = NULL;\r\n    HeartbeatConnection* listenCon = (HeartbeatConnection*)arg;\r\n    if (listenCon == NULL) {\r\n        ereport(COMMERROR, (errmsg(\"AcceptConn arg is NULL.\")));\r\n        return;\r\n    }\r\n\r\n    port = ConnectCreate(listenCon->fd);\r\n    if (port != NULL) {\r\n        HeartbeatConnection* newCon = MakeConnection(port->sock, port);\r\n        if (newCon == NULL) {\r\n            ereport(DEBUG1, (errmsg(\"makeConnection failed.\")));\r\n            CloseAndFreePort(port);\r\n            port = NULL;\r\n            return;\r\n        }\r\n\r\n        newCon->callback = ProcessStartupPacket;\r\n        newCon->epHandle = epollFd;\r\n        newCon->arg = listenCon->arg;\r\n\r\n        /*\r\n         * The connection has not send startup packet,\r\n         * and store it in undentified connections first.\r\n         */\r\n        HeartbeatServer* server = (HeartbeatServer*)listenCon->arg;\r\n        server->AddUnidentifiedConnection(newCon, (HeartbeatConnection**)releasedConnPtr);\r\n\r\n        /* add new connection fd to main thread to process startup packet */\r\n        if (EventAdd(epollFd, EPOLLIN, newCon)) {\r\n            ereport(COMMERROR, (errmsg(\"Add new connection socket failed[fd=%d], evnets[%X].\", port->sock, EPOLLIN)));\r\n            server->RemoveUnidentifiedConnection(newCon);\r\n            ConnCloseAndFree(newCon);\r\n            newCon = NULL;\r\n            return;\r\n        }\r\n        ereport(LOG, (errmsg(\"Accept new connection, socket [fd=%d], evnets[%X].\", port->sock, EPOLLIN)));\r\n    }\r\n}",
+		"comment":"/* Accept new connections from clients */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"AcceptConn"
+	},
+	"HeartbeatServer::AddConnection":{
+		"body":"bool HeartbeatServer::AddConnection(HeartbeatConnection* con, HeartbeatConnection** releasedConnPtr)\r\n{\r\n    *releasedConnPtr = NULL;\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        ReplConnInfo* replconninfo = t_thrd.postmaster_cxt.ReplConnArray[i];\r\n        if (replconninfo == NULL) {\r\n            continue;\r\n        }\r\n\r\n        if (strncmp((char*)replconninfo->remotehost, con->remoteHost, IP_LEN) == 0 &&\r\n            replconninfo->remoteheartbeatport == con->channelIdentifier) {\r\n            if (identifiedConns_[i] != NULL) {\r\n                /* remove old connection if has duplicated connections. */\r\n                ereport(COMMERROR,\r\n                    (errmsg(\"The connection has existed and remove the old connection, \"\r\n                            \"remote ip: %s, remote heartbeat port:%d, old fd:%d, new fd:%d.\",\r\n                        con->remoteHost,\r\n                        con->channelIdentifier,\r\n                        identifiedConns_[i]->fd,\r\n                        con->fd)));\r\n                RemoveConn(identifiedConns_[i]);\r\n                *releasedConnPtr = identifiedConns_[i];\r\n            }\r\n            identifiedConns_[i] = con;\r\n            ereport(LOG,\r\n                (errmsg(\"Adding connection successed, remote ip: %s, remote heartbeat port:%d.\",\r\n                    con->remoteHost,\r\n                    con->channelIdentifier)));\r\n            RemoveUnidentifiedConnection(con);\r\n            return true;\r\n        }\r\n    }\r\n\r\n    ereport(COMMERROR,\r\n        (errmsg(\"The connection is illegal, remote ip: %s, remote heartbeat port:%d.\",\r\n            con->remoteHost,\r\n            con->channelIdentifier)));\r\n    RemoveUnidentifiedConnection(con);\r\n    return false;\r\n}",
+		"comment":"/*\r\n * If the channelIdentifier from client startup packet equals to\r\n * the remoteheartbeatport in the server's configure file, add conn to identifiedConns_.\r\n * else the conn is illegal and remmove it from unidentifiedConns_.\r\n *\r\n */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::AddConnection"
+	},
+	"HeartbeatServer::AddUnidentifiedConnection":{
+		"body":"void HeartbeatServer::AddUnidentifiedConnection(HeartbeatConnection* con, HeartbeatConnection** releasedConnPtr)\r\n{\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        if (unidentifiedConns_[i] == NULL) {\r\n            unidentifiedConns_[i] = con;\r\n            return;\r\n        }\r\n    }\r\n\r\n    /* Too many unidentified connections, release the oldest. */\r\n    ereport(COMMERROR, (errmsg(\"Too many unidentified connections.\")));\r\n    int pos = ReleaseOldestUnidentifiedConnection(releasedConnPtr);\r\n    unidentifiedConns_[pos] = con;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::AddUnidentifiedConnection"
+	},
+	"HeartbeatServer::ClearListenConnections":{
+		"body":"void HeartbeatServer::ClearListenConnections()\r\n{\r\n    for (int i = 0; i < MAX_REPLNODE_NUM; ++i) {\r\n        if (listenConns_[i] != NULL) {\r\n            RemoveConn(listenConns_[i]);\r\n            listenConns_[i] = NULL;\r\n        }\r\n        serverListenSocket_[i] = PGINVALID_SOCKET;\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::ClearListenConnections"
+	},
+	"HeartbeatServer::CloseListenSockets":{
+		"body":"void HeartbeatServer::CloseListenSockets()\r\n{\r\n    for (int i = 0; i < MAX_REPLNODE_NUM; ++i) {\r\n        if (serverListenSocket_[i] != PGINVALID_SOCKET) {\r\n            (void)close(serverListenSocket_[i]);\r\n            serverListenSocket_[i] = PGINVALID_SOCKET;\r\n        }\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::CloseListenSockets"
+	},
+	"HeartbeatServer::HeartbeatServer":{
+		"body":"HeartbeatServer::HeartbeatServer(int epollfd)\r\n{\r\n    epollfd_ = epollfd;\r\n    started_ = false;\r\n\r\n    for (int i = 0; i < MAX_REPLNODE_NUM; ++i) {\r\n        serverListenSocket_[i] = PGINVALID_SOCKET;\r\n        listenConns_[i] = NULL;\r\n        identifiedConns_[i] = NULL;\r\n        unidentifiedConns_[i] = NULL;\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::HeartbeatServer"
+	},
+	"HeartbeatServer::InitListenConnections":{
+		"body":"bool HeartbeatServer::InitListenConnections()\r\n{\r\n    int i;\r\n    int ret;\r\n\r\n    for (i = 0; i < MAX_REPLNODE_NUM; i++) {\r\n        int listenFd = serverListenSocket_[i];\r\n\r\n        if (listenFd == PGINVALID_SOCKET) {\r\n            break;\r\n        }\r\n\r\n        ret = SetSocketNoBlock(listenFd);\r\n        if (ret != STATUS_OK) {\r\n            ereport(COMMERROR, (errmsg(\"SetSocketNoBlock failed.\")));\r\n            return false;\r\n        }\r\n\r\n        HeartbeatConnection* listenCon = MakeConnection(listenFd, NULL);\r\n        if (listenCon == NULL) {\r\n            ereport(COMMERROR,\r\n                (errmsg(\"makeConnection failed, listenCon is NULL,epollFd=%d, listenFd=%d.\", epollfd_, listenFd)));\r\n            return false;\r\n        }\r\n\r\n        listenCon->callback = AcceptConn;\r\n        listenCon->epHandle = epollfd_;\r\n        listenCon->arg = (void*)this;\r\n\r\n        if (EventAdd(epollfd_, EPOLLIN, listenCon)) {\r\n            ereport(COMMERROR, (errmsg(\"Add listen socket failed[fd=%d].\", listenFd)));\r\n            ConnCloseAndFree(listenCon);\r\n            serverListenSocket_[i] = PGINVALID_SOCKET;\r\n            return false;\r\n        }\r\n        listenConns_[i] = listenCon;\r\n        ereport(DEBUG2, (errmsg(\"Add listen socket [fd=%d] OK , evnets[%X].\", listenCon->fd, EPOLLIN)));\r\n    }\r\n\r\n    return true;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::InitListenConnections"
+	},
+	"HeartbeatServer::IsAlreadyListen":{
+		"body":"bool HeartbeatServer::IsAlreadyListen(const char* ip, int port) const\r\n{\r\n    int listen_index = 0;\r\n    char sock_ip[IP_LEN] = {0};\r\n    errno_t rc = 0;\r\n\r\n    if (ip == NULL || port <= 0) {\r\n        return false;\r\n    }\r\n\r\n    for (listen_index = 0; listen_index < MAX_REPLNODE_NUM; ++listen_index) {\r\n        if (serverListenSocket_[listen_index] != PGINVALID_SOCKET) {\r\n            struct sockaddr_in saddr;\r\n            socklen_t slen;\r\n            char* result = NULL;\r\n            rc = memset_s(&saddr, sizeof(saddr), 0, sizeof(saddr));\r\n            securec_check(rc, \"\", \"\");\r\n\r\n            slen = sizeof(saddr);\r\n            if (getsockname(serverListenSocket_[listen_index], (struct sockaddr*)&saddr, (socklen_t*)&slen) < 0) {\r\n                ereport(WARNING, (errmsg(\"Get socket name failed\")));\r\n                continue;\r\n            }\r\n\r\n            if (saddr.sin_family == AF_INET6) {\r\n                result = inet_net_ntop(AF_INET6, &saddr.sin_addr, AF_INET6_MAX_BITS, sock_ip, IP_LEN);\r\n                if (result == NULL) {\r\n                    ereport(WARNING, (errmsg(\"inet_net_ntop failed, error: %d\", EAFNOSUPPORT)));\r\n                }\r\n            } else if (saddr.sin_family == AF_INET) {\r\n                result = inet_net_ntop(AF_INET, &saddr.sin_addr, AF_INET_MAX_BITS, sock_ip, IP_LEN);\r\n                if (result == NULL) {\r\n                    ereport(WARNING, (errmsg(\"inet_net_ntop failed, error: %d\", EAFNOSUPPORT)));\r\n                }\r\n            } else if (saddr.sin_family == AF_UNIX) {\r\n                continue;\r\n            }\r\n            if ((strcmp(ip, sock_ip) == 0) && (ntohs(saddr.sin_port)) == port) {\r\n                return true;\r\n            }\r\n        }\r\n    }\r\n\r\n    return false;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::IsAlreadyListen"
+	},
+	"HeartbeatServer::ReleaseOldestUnidentifiedConnection":{
+		"body":"int HeartbeatServer::ReleaseOldestUnidentifiedConnection(HeartbeatConnection** releasedConnPtr)\r\n{\r\n    int oldestPos = -1;\r\n    TimestampTz minTime = -1;\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        if (unidentifiedConns_[i] == NULL) {\r\n            continue;\r\n        }\r\n        if (minTime == -1 || unidentifiedConns_[i]->lastActiveTime < minTime) {\r\n            oldestPos = i;\r\n            minTime = unidentifiedConns_[i]->lastActiveTime;\r\n        }\r\n    }\r\n\r\n    if (oldestPos == -1) {\r\n        /* something bad happen, exit. */\r\n        ereport(FATAL, (errmsg(\"Can't find the oldest unidentified connection.\")));\r\n    }\r\n\r\n    RemoveConn(unidentifiedConns_[oldestPos]);\r\n    *releasedConnPtr = unidentifiedConns_[oldestPos];\r\n    unidentifiedConns_[oldestPos] = NULL;\r\n    return oldestPos;\r\n}",
+		"comment":"/* release the oldest unidentified connection and return the position */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::ReleaseOldestUnidentifiedConnection"
+	},
+	"HeartbeatServer::RemoveConnection":{
+		"body":"void HeartbeatServer::RemoveConnection(HeartbeatConnection* con)\r\n{\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        ReplConnInfo* replconninfo = t_thrd.postmaster_cxt.ReplConnArray[i];\r\n        if (replconninfo == NULL) {\r\n            continue;\r\n        }\r\n\r\n        if (strncmp((char*)replconninfo->remotehost, con->remoteHost, IP_LEN) == 0 &&\r\n            replconninfo->remoteheartbeatport == con->channelIdentifier) {\r\n            if (identifiedConns_[i] == NULL) {\r\n                ereport(COMMERROR,\r\n                    (errmsg(\"The connection is not existed, remote ip: %s, remote heartbeat port:%d.\",\r\n                        con->remoteHost,\r\n                        con->channelIdentifier)));\r\n            } else {\r\n                ereport(LOG,\r\n                    (errmsg(\"Removing connection successed, remote ip: %s, remote heartbeat port:%d.\",\r\n                        con->remoteHost,\r\n                        con->channelIdentifier)));\r\n                identifiedConns_[i] = NULL;\r\n            }\r\n            return;\r\n        }\r\n    }\r\n    ereport(COMMERROR,\r\n        (errmsg(\"Remove an unexisted connection, remote ip: %s, remote heartbeat port:%d.\",\r\n            con->remoteHost,\r\n            con->channelIdentifier)));\r\n}",
+		"comment":"/*\r\n * Remove an indentified connection.\r\n */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::RemoveConnection"
+	},
+	"HeartbeatServer::RemoveUnidentifiedConnection":{
+		"body":"void HeartbeatServer::RemoveUnidentifiedConnection(HeartbeatConnection* con)\r\n{\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        if (unidentifiedConns_[i] == con) {\r\n            unidentifiedConns_[i] = NULL;\r\n            return;\r\n        }\r\n    }\r\n    /* should never happen. */\r\n    ereport(COMMERROR, (errmsg(\"Remove an not existed and unidentified connection, remote ip: %s.\", con->remoteHost)));\r\n}",
+		"comment":"/* used for move con from unidentifiedConns to identifiedConns_, so can't free con */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::RemoveUnidentifiedConnection"
+	},
+	"HeartbeatServer::Restart":{
+		"body":"bool HeartbeatServer::Restart()\r\n{\r\n    Stop();\r\n    return Start();\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::Restart"
+	},
+	"HeartbeatServer::Start":{
+		"body":"bool HeartbeatServer::Start()\r\n{\r\n    if (started_) {\r\n        ereport(LOG, (errmsg(\"The heartbeat server has been started.\")));\r\n        return true;\r\n    }\r\n\r\n    int status = 0;\r\n    /*  To adapt ReplConnArray, i start from 1. */\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        if (t_thrd.postmaster_cxt.ReplConnArray[i] != NULL) {\r\n            if (IsAlreadyListen(t_thrd.postmaster_cxt.ReplConnArray[i]->localhost,\r\n                t_thrd.postmaster_cxt.ReplConnArray[i]->localheartbeatport)) {\r\n                continue;\r\n            }\r\n\r\n            status = StreamServerPort(AF_UNSPEC,\r\n                t_thrd.postmaster_cxt.ReplConnArray[i]->localhost,\r\n                (unsigned short)t_thrd.postmaster_cxt.ReplConnArray[i]->localheartbeatport,\r\n                serverListenSocket_,\r\n                MAX_REPLNODE_NUM);\r\n            if (status != STATUS_OK) {\r\n                ereport(COMMERROR,\r\n                    (errmsg(\"could not create Ha listen socket for ReplConnInfoArr[%d]\\\"%s:%d\\\"\",\r\n                        i,\r\n                        t_thrd.postmaster_cxt.ReplConnArray[i]->localhost,\r\n                        t_thrd.postmaster_cxt.ReplConnArray[i]->localheartbeatport)));\r\n                CloseListenSockets();\r\n                return false;\r\n            }\r\n        }\r\n    }\r\n\r\n    if (InitListenConnections()) {\r\n        started_ = true;\r\n    } else {\r\n        /* If initing one connection failed, clear all inited connections */\r\n        ClearListenConnections();\r\n    }\r\n    return started_;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::Start"
+	},
+	"HeartbeatServer::Stop":{
+		"body":"void HeartbeatServer::Stop()\r\n{\r\n    if (!started_) {\r\n        ereport(LOG, (errmsg(\"The heartbeat server has not been started.\")));\r\n        return;\r\n    }\r\n\r\n    ereport(LOG, (errmsg(\"Stop the heartbeat server.\")));\r\n    for (int i = 0; i < MAX_REPLNODE_NUM; ++i) {\r\n        if (listenConns_[i] != NULL) {\r\n            RemoveConn(listenConns_[i]);\r\n            listenConns_[i] = NULL;\r\n        }\r\n\r\n        if (identifiedConns_[i] != NULL) {\r\n            RemoveConn(identifiedConns_[i]);\r\n            identifiedConns_[i] = NULL;\r\n        }\r\n\r\n        if (unidentifiedConns_[i] != NULL) {\r\n            RemoveConn(unidentifiedConns_[i]);\r\n            unidentifiedConns_[i] = NULL;\r\n        }\r\n\r\n        serverListenSocket_[i] = PGINVALID_SOCKET;\r\n    }\r\n    started_ = false;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::Stop"
+	},
+	"HeartbeatServer::~HeartbeatServer":{
+		"body":"HeartbeatServer::~HeartbeatServer()\r\n{\r\n    Stop();\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"HeartbeatServer::~HeartbeatServer"
+	},
+	"ProcessHeartbeatPacketServer":{
+		"body":"static void ProcessHeartbeatPacketServer(int epollFd, int events, void* arg, void** releasedConnPtr)\r\n{\r\n    ereport(DEBUG2, (errmsg(\"[server] process heartbeat\")));\r\n\r\n    *releasedConnPtr = NULL;\r\n    HeartbeatConnection* con = (HeartbeatConnection*)arg;\r\n    HeartbeatServer* server = (HeartbeatServer*)con->arg;\r\n\r\n    HeartbeatPacket inPacket;\r\n    if (pq_getbytes(con->port, (char*)(&inPacket), sizeof(HeartbeatPacket)) != 0) {\r\n        ereport(LOG, (errmsg(\"connection closed by peer.\")));\r\n        server->RemoveConnection(con);\r\n        RemoveConn(con);\r\n        *releasedConnPtr = con;\r\n        return;\r\n    }\r\n\r\n    con->lastActiveTime = GetCurrentTimestamp();\r\n    UpdateLastHeartbeatTime(con->remoteHost, con->channelIdentifier, con->lastActiveTime);\r\n\r\n    if (!SendHeartbeatPacket(con)) {\r\n        server->RemoveConnection(con);\r\n        RemoveConn(con);\r\n        *releasedConnPtr = con;\r\n    }\r\n}",
+		"comment":"/* The server process the heartbeat packet and reply. */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"ProcessHeartbeatPacketServer"
+	},
+	"ProcessStartupPacket":{
+		"body":"static void ProcessStartupPacket(int epollFd, int events, void* arg, void** releasedConnPtr)\r\n{\r\n    *releasedConnPtr = NULL;\r\n    HeartbeatConnection* con = (HeartbeatConnection*)arg;\r\n    HeartbeatServer* server = (HeartbeatServer*)con->arg;\r\n\r\n    HeartbeatStartupPacket inPacket;\r\n    inPacket.channelIdentifier = INVALID_CHANNEL_ID;\r\n    if (pq_getbytes(con->port, (char*)(&inPacket), sizeof(HeartbeatStartupPacket)) != 0) {\r\n        ereport(LOG, (errmsg(\"connection closed by peer.\")));\r\n        server->RemoveUnidentifiedConnection(con);\r\n        RemoveConn(con);\r\n        *releasedConnPtr = con;\r\n        return;\r\n    }\r\n\r\n    if (inPacket.channelIdentifier == INVALID_CHANNEL_ID) {\r\n        ereport(COMMERROR, (errmsg(\"Invalid channel id.\")));\r\n        server->RemoveUnidentifiedConnection(con);\r\n        RemoveConn(con);\r\n        *releasedConnPtr = con;\r\n        return;\r\n    }\r\n\r\n    con->channelIdentifier = inPacket.channelIdentifier;\r\n    con->lastActiveTime = GetCurrentTimestamp();\r\n    con->callback = ProcessHeartbeatPacketServer;\r\n\r\n    if (!server->AddConnection(con, (HeartbeatConnection**)releasedConnPtr)) {\r\n        RemoveConn(con);\r\n        *releasedConnPtr = con;\r\n        return;\r\n    }\r\n\r\n    UpdateLastHeartbeatTime(con->remoteHost, con->channelIdentifier, con->lastActiveTime);\r\n    if (!SendHeartbeatPacket(con)) {\r\n        server->RemoveConnection(con);\r\n        RemoveConn(con);\r\n        *releasedConnPtr = con;\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_server.cpp",
+		"name":"ProcessStartupPacket"
+	}
+}

@@ -1,0 +1,62 @@
+{
+	"GetChannelId":{
+		"body":"static int GetChannelId(char remotehost[IP_LEN], int remoteheartbeatport)\r\n{\r\n    struct replconninfo* replconninfo = NULL;\r\n\r\n    for (int i = 0; i < MAX_REPLNODE_NUM; i++) {\r\n        replconninfo = t_thrd.postmaster_cxt.ReplConnArray[i];\r\n        if (replconninfo == NULL) {\r\n            continue;\r\n        }\r\n\r\n        if (strncmp((char*)replconninfo->remotehost, (char*)remotehost, IP_LEN) == 0 &&\r\n            replconninfo->remoteheartbeatport == remoteheartbeatport) {\r\n            return replconninfo->localheartbeatport;\r\n        }\r\n    }\r\n    ereport(COMMERROR,\r\n        (errmsg(\"Failed to get channel id, remote host: %s, remote port:%d\", remotehost, remoteheartbeatport)));\r\n    return -1;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"GetChannelId"
+	},
+	"HeartbeatClient::Connect":{
+		"body":"bool HeartbeatClient::Connect()\r\n{\r\n    if (isConnect_) {\r\n        return true;\r\n    }\r\n\r\n    char connstr[MAX_CONN_INFO];\r\n    struct replconninfo* conninfo = NULL;\r\n    PurePort* port = NULL;\r\n    int rcs = 0;\r\n    int remotePort = -1;\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        conninfo = t_thrd.postmaster_cxt.ReplConnArray[i];\r\n        if (conninfo == NULL) {\r\n            continue;\r\n        }\r\n\r\n        rcs = snprintf_s(connstr,\r\n            MAX_CONN_INFO,\r\n            MAX_CONN_INFO - 1,\r\n            \"host=%s port=%d localhost=%s localport=%d\",\r\n            conninfo->remotehost,\r\n            conninfo->remoteheartbeatport,\r\n            conninfo->localhost,\r\n            conninfo->localheartbeatport);\r\n        securec_check_ss(rcs, \"\", \"\");\r\n        port = PQconnect(connstr);\r\n        if (port != NULL) {\r\n            remotePort = conninfo->remoteheartbeatport;\r\n            ereport(LOG, (errmsg(\"Connected to heartbeat primary :%s success.\", connstr)));\r\n            break;\r\n        }\r\n    }\r\n\r\n    if (port != NULL) {\r\n        /* newCon takeover port */\r\n        HeartbeatConnection* newCon = MakeConnection(port->sock, port);\r\n        if (newCon == NULL) {\r\n            ereport(COMMERROR, (errmsg(\"makeConnection failed.\")));\r\n            CloseAndFreePort(port);\r\n            port = NULL;\r\n            return false;\r\n        }\r\n\r\n        if (!InitConnection(newCon, remotePort)) {\r\n            ConnCloseAndFree(newCon);\r\n        }\r\n    } else {\r\n        ereport(COMMERROR, (errmsg(\"Failed to connect to heartbeat primary.\")));\r\n    }\r\n    return isConnect_;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::Connect"
+	},
+	"HeartbeatClient::DisConnect":{
+		"body":"void HeartbeatClient::DisConnect()\r\n{\r\n    if (hbConn_ != NULL) {\r\n        ereport(LOG, (errmsg(\"Disconnect the heartbeat client.\")));\r\n        RemoveConn(hbConn_);\r\n    }\r\n    hbConn_ = NULL;\r\n    isConnect_ = false;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::DisConnect"
+	},
+	"HeartbeatClient::HeartbeatClient":{
+		"body":"HeartbeatClient::HeartbeatClient(int epollfd) : epollfd_(epollfd), isConnect_(false), hbConn_(NULL)\r\n{}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::HeartbeatClient"
+	},
+	"HeartbeatClient::InitConnection":{
+		"body":"bool HeartbeatClient::InitConnection(HeartbeatConnection* con, int remotePort)\r\n{\r\n    int ret = SetSocketNoBlock(con->fd);\r\n    if (ret != STATUS_OK) {\r\n        ereport(COMMERROR, (errmsg(\"SetSocketNoBlock failed.\")));\r\n        return false;\r\n    }\r\n\r\n    con->callback = ProcessHeartbeatPacketClient;\r\n    con->epHandle = epollfd_;\r\n    con->channelIdentifier = remotePort;\r\n    con->arg = (void*)this;\r\n\r\n    if (EventAdd(epollfd_, EPOLLIN, con)) {\r\n        ereport(COMMERROR, (errmsg(\"Add listen socket failed[fd=%d].\", con->fd)));\r\n        return false;\r\n    }\r\n    ereport(LOG, (errmsg(\"Add listen socket [fd=%d] OK , evnets[%X].\", con->fd, EPOLLIN)));\r\n    if (!SendStartupPacket(con)) {\r\n        EventDel(con->epHandle, con);\r\n        return false;\r\n    }\r\n\r\n    hbConn_ = con;\r\n    isConnect_ = true;\r\n    return true;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::InitConnection"
+	},
+	"HeartbeatClient::IsConnect":{
+		"body":"bool HeartbeatClient::IsConnect() const\r\n{\r\n    return isConnect_;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::IsConnect"
+	},
+	"HeartbeatClient::SendBeatHeartPacket":{
+		"body":"bool HeartbeatClient::SendBeatHeartPacket()\r\n{\r\n    if (isConnect_) {\r\n        if (SendHeartbeatPacket(hbConn_)) {\r\n            ereport(DEBUG2, (errmsg(\"[client] send heartbeat\")));\r\n            return true;\r\n        } else {\r\n            ereport(COMMERROR, (errmsg(\"[client] Failed to send heartbeat, disconnect.\")));\r\n            DisConnect();\r\n            return false;\r\n        }\r\n    }\r\n    return false;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::SendBeatHeartPacket"
+	},
+	"HeartbeatClient::SendStartupPacket":{
+		"body":"bool HeartbeatClient::SendStartupPacket(const HeartbeatConnection* con) const\r\n{\r\n    ereport(DEBUG2, (errmsg(\"[client] send statup packet\")));\r\n    HeartbeatStartupPacket packet;\r\n    packet.channelIdentifier = GetChannelId(con->remoteHost, con->channelIdentifier);\r\n    packet.sendTime = GetCurrentTimestamp();\r\n\r\n    return SendPacket(con, (char*)(&packet), sizeof(HeartbeatStartupPacket));\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::SendStartupPacket"
+	},
+	"HeartbeatClient::~HeartbeatClient":{
+		"body":"HeartbeatClient::~HeartbeatClient()\r\n{\r\n    DisConnect();\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"HeartbeatClient::~HeartbeatClient"
+	},
+	"ProcessHeartbeatPacketClient":{
+		"body":"static void ProcessHeartbeatPacketClient(int epollFd, int events, void* arg, void** releasedConnPtr)\r\n{\r\n    ereport(DEBUG2, (errmsg(\"[client] process heartbeat.\")));\r\n\r\n    *releasedConnPtr = NULL;\r\n    HeartbeatConnection* con = (HeartbeatConnection*)arg;\r\n    HeartbeatPacket inPacket;\r\n    if (pq_getbytes(con->port, (char*)(&inPacket), sizeof(HeartbeatPacket)) != 0) {\r\n        ereport(LOG, (errmsg(\"connection closed by peer, disconnect.\")));\r\n        HeartbeatClient* client = (HeartbeatClient*)con->arg;\r\n        client->DisConnect();\r\n        *releasedConnPtr = con;\r\n        return;\r\n    }\r\n\r\n    con->lastActiveTime = GetCurrentTimestamp();\r\n    UpdateLastHeartbeatTime(con->remoteHost, con->channelIdentifier, con->lastActiveTime);\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_client.cpp",
+		"name":"ProcessHeartbeatPacketClient"
+	}
+}

@@ -1,0 +1,116 @@
+{
+	"create_client_and_server":{
+		"body":"static int create_client_and_server(int epollfd)\r\n{\r\n    /*\r\n     * The heartbeat server and client can appear simultaneously.\r\n     * To support dummy standby, only need add current_mode conditions.\r\n     */\r\n    if (t_thrd.postmaster_cxt.HaShmData->current_mode == PRIMARY_MODE) {\r\n        g_heartbeat_server = new (std::nothrow) HeartbeatServer(epollfd);\r\n        if (g_heartbeat_server == NULL) {\r\n            ereport(COMMERROR, (errmsg(\"Failed to cerate heartbeat server.\")));\r\n            return 1;\r\n        }\r\n\r\n        if (!g_heartbeat_server->Start()) {\r\n            return 1;\r\n        }\r\n    }\r\n\r\n    if (t_thrd.postmaster_cxt.HaShmData->current_mode == STANDBY_MODE) {\r\n        g_heartbeat_client = new (std::nothrow) HeartbeatClient(epollfd);\r\n        if (g_heartbeat_client == NULL) {\r\n            ereport(COMMERROR, (errmsg(\"Failed to create heartbeat client.\")));\r\n            return 1;\r\n        }\r\n    }\r\n\r\n    if (g_heartbeat_server == NULL && g_heartbeat_client == NULL) {\r\n        ereport(COMMERROR,\r\n            (errmsg(\"There is no need to create heartbeat server and client in mode %d.\",\r\n                t_thrd.postmaster_cxt.HaShmData->current_mode)));\r\n\r\n        /* Wait to change to the primary mode or standby mode. */\r\n        pg_usleep(1000000L);\r\n        return 1;\r\n    }\r\n    return 0;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"create_client_and_server"
+	},
+	"deal_with_events":{
+		"body":"static int deal_with_events(int epollfd, struct epoll_event* events, const sigset_t* block_sig_set)\r\n{\r\n    /* Wait for events to happen in send_interval */\r\n    int fds = epoll_pwait(epollfd, events, MAX_EVENTS, u_sess->attr.attr_common.dn_heartbeat_interval, block_sig_set);\r\n    if (fds < 0) {\r\n        if (errno != EINTR && errno != EWOULDBLOCK && errno != ETIMEDOUT) {\r\n            ereport(ERROR, (errmsg(\"epoll_wait fd %d error :%m, agent thread exit.\", epollfd)));\r\n            return 1;\r\n        }\r\n    }\r\n\r\n    for (int i = 0; i < fds; i++) {\r\n        HeartbeatConnection* con = (HeartbeatConnection*)events[i].data.ptr;\r\n        HeartbeatConnection* releasedConn = NULL;\r\n\r\n        if (events[i].events & EPOLLIN) {\r\n            if (con != NULL) {\r\n                con->callback(epollfd, events[i].events, con, (void**)&releasedConn);\r\n                if (releasedConn) {\r\n                    /* skip remaining events of the release connection */\r\n                    unset_events_conn(events, i, fds, releasedConn);\r\n                }\r\n            }\r\n        }\r\n    }\r\n    /* add flow control to avoid network attack */\r\n    pg_usleep(SLEEP_MILLISECONDS * USECS_PER_MSEC);\r\n    return 0;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"deal_with_events"
+	},
+	"deal_with_sigup":{
+		"body":"static int deal_with_sigup()\r\n{\r\n    if (t_thrd.heartbeat_cxt.got_SIGHUP) {\r\n        t_thrd.heartbeat_cxt.got_SIGHUP = false;\r\n        ProcessConfigFile(PGC_SIGHUP);\r\n        if (g_heartbeat_server != NULL) {\r\n            if (!g_heartbeat_server->Restart()) {\r\n                return 1;\r\n            }\r\n        }\r\n\r\n        if (g_heartbeat_client != NULL) {\r\n            /* The client will auto connect later. */\r\n            g_heartbeat_client->DisConnect();\r\n        }\r\n    }\r\n    return 0;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"deal_with_sigup"
+	},
+	"delay_control":{
+		"body":"static void delay_control(TimestampTz last_send_time)\r\n{\r\n    long secs = 0;\r\n    int microsecs = 0;\r\n    TimestampTz now = GetCurrentTimestamp();\r\n    TimestampTz timeout = TimestampTzPlusMilliseconds(last_send_time, u_sess->attr.attr_common.dn_heartbeat_interval);\r\n    TimestampDifference(now, timeout, &secs, &microsecs);\r\n    Assert(secs <= u_sess->attr.attr_common.dn_heartbeat_interval);\r\n\r\n    /* If has exceeded send_interval, don't delay. */\r\n    if (secs == 0 && microsecs == 0) {\r\n        return;\r\n    }\r\n\r\n    pg_usleep(secs * USECS_PER_SEC + microsecs);\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"delay_control"
+	},
+	"destroy_client_and_server":{
+		"body":"static void destroy_client_and_server()\r\n{\r\n    if (g_heartbeat_server != NULL) {\r\n        delete g_heartbeat_server;\r\n        g_heartbeat_server = NULL;\r\n    }\r\n\r\n    if (g_heartbeat_client != NULL) {\r\n        delete g_heartbeat_client;\r\n        g_heartbeat_client = NULL;\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"destroy_client_and_server"
+	},
+	"get_last_reply_timestamp":{
+		"body":"TimestampTz get_last_reply_timestamp(int replindex)\r\n{\r\n    /* Initialize the last reply timestamp */\r\n    volatile heartbeat_state* stat = t_thrd.heartbeat_cxt.state;\r\n    TimestampTz last_reply_time = 0;\r\n    if (stat == NULL || stat->pid == 0) {\r\n        return last_reply_time;\r\n    }\r\n\r\n    if (replindex < START_REPLNODE_NUM || replindex >= MAX_REPLNODE_NUM) {\r\n        ereport(COMMERROR, (errmsg(\"Invalid channel id: %d.\", replindex)));\r\n        return last_reply_time;\r\n    }\r\n\r\n    if (t_thrd.postmaster_cxt.ReplConnArray[replindex] == NULL) {\r\n        ereport(COMMERROR, (errmsg(\"The reliconninfo is not find.\")));\r\n        return last_reply_time;\r\n    }\r\n\r\n    SpinLockAcquire(&stat->mutex);\r\n    last_reply_time = stat->channel_array[replindex].last_reply_timestamp;\r\n    SpinLockRelease(&stat->mutex);\r\n\r\n    ereport(DEBUG2, (errmsg(\"Get last reply timestap of replindex:%d, Time:%ld\", replindex, last_reply_time)));\r\n    return last_reply_time;\r\n}",
+		"comment":"/*\r\n * Return 0 if the heartbeat thread is not running.\r\n */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"get_last_reply_timestamp"
+	},
+	"heartbeat_handle_exception":{
+		"body":"static void heartbeat_handle_exception(MemoryContext heartbeat_context)\r\n{\r\n    /* Since not using PG_TRY, must reset error stack by hand */\r\n    t_thrd.log_cxt.error_context_stack = NULL;\r\n\r\n    /* Prevent interrupts while cleaning up */\r\n    HOLD_INTERRUPTS();\r\n\r\n    /* Report the error to the server log */\r\n    EmitErrorReport();\r\n\r\n    /* Buffer pins are released here: */\r\n    ResourceOwnerRelease(t_thrd.utils_cxt.CurrentResourceOwner, RESOURCE_RELEASE_BEFORE_LOCKS, false, true);\r\n\r\n    /*\r\n     * Free client and server before free memory context\r\n     */\r\n    g_instance.heartbeat_cxt.heartbeat_running = false;\r\n    destroy_client_and_server();\r\n\r\n    /*\r\n     * Now return to normal top-level context and clear ErrorContext for\r\n     * next time.\r\n     */\r\n    (void)MemoryContextSwitchTo(heartbeat_context);\r\n    FlushErrorState();\r\n\r\n    /* Flush any leaked data in the top-level context */\r\n    MemoryContextResetAndDeleteChildren(heartbeat_context);\r\n\r\n    /* Now we can allow interrupts again */\r\n    RESUME_INTERRUPTS();\r\n\r\n    /*\r\n     * Sleep at least 1 second after any error.  A write error is likely\r\n     * to be repeated, and we don't want to be filling the error logs as\r\n     * fast as we can.\r\n     */\r\n    pg_usleep(1000000L);\r\n\r\n    return;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_handle_exception"
+	},
+	"heartbeat_init":{
+		"body":"static void heartbeat_init(void)\r\n{\r\n    /*\r\n     * heartbeat state should be set up already (we inherit this by fork() or\r\n     * EXEC_BACKEND mechanism from the postmaster).\r\n     */\r\n    Assert(t_thrd.heartbeat_cxt.state != NULL);\r\n    volatile heartbeat_state* stat = t_thrd.heartbeat_cxt.state;\r\n    stat->pid = t_thrd.proc_cxt.MyProcPid;\r\n\r\n#ifndef WIN32\r\n    stat->lwpId = syscall(SYS_gettid);\r\n#else\r\n    stat->lwpId = (int)t_thrd.proc_cxt.MyProcPid;\r\n#endif\r\n\r\n    /* Arrange to clean up at walsender exit */\r\n    on_shmem_exit(heartbeat_kill, 0);\r\n}",
+		"comment":"/* Initialize heartbeat state structure */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_init"
+	},
+	"heartbeat_kill":{
+		"body":"static void heartbeat_kill(int code, Datum arg)\r\n{\r\n    heartbeat_state* stat = t_thrd.heartbeat_cxt.state;\r\n    errno_t rc = 0;\r\n\r\n    Assert(stat != NULL);\r\n\r\n    t_thrd.heartbeat_cxt.state = NULL;\r\n\r\n    /* Mark WalSnd struct no longer in use. */\r\n    SpinLockAcquire(&stat->mutex);\r\n    stat->pid = 0;\r\n    stat->lwpId = 0;\r\n\r\n    rc = memset_s(\r\n        stat->channel_array, sizeof(channel_info) * MAX_REPLNODE_NUM, 0, sizeof(channel_info) * MAX_REPLNODE_NUM);\r\n    securec_check_c(rc, \"\", \"\");\r\n    SpinLockRelease(&stat->mutex);\r\n\r\n    ereport(LOG, (errmsg(\"heartbeat thread shut down\")));\r\n}",
+		"comment":"/* Destroy the per-walsender data structure for this walsender process */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_kill"
+	},
+	"heartbeat_main":{
+		"body":"void heartbeat_main(void)\r\n{\r\n    sigjmp_buf localSigjmpBuf;\r\n    MemoryContext heartbeat_context;\r\n\r\n    t_thrd.role = HEARTBEAT;\r\n    t_thrd.proc_cxt.MyProgName = \"Heartbeat\";\r\n\r\n    heartbeat_init();\r\n\r\n    /*\r\n     * Reset some signals that are accepted by postmaster but not here\r\n     */\r\n    (void)gspqsignal(SIGHUP, heartbeat_sighup_handler);\r\n    (void)gspqsignal(SIGINT, SIG_IGN);\r\n    (void)gspqsignal(SIGTERM, heartbeat_shutdown_handler);\r\n    (void)gspqsignal(SIGQUIT, heartbeat_quick_die); /* hard crash time */\r\n    (void)gspqsignal(SIGALRM, SIG_IGN);\r\n    (void)gspqsignal(SIGPIPE, SIG_IGN);\r\n    (void)gspqsignal(SIGUSR1, heartbeat_sigusr1_handler);\r\n    (void)gspqsignal(SIGUSR2, SIG_IGN);\r\n\r\n    /*\r\n     * Reset some signals that are accepted by postmaster but not here\r\n     */\r\n    (void)gspqsignal(SIGCHLD, SIG_DFL);\r\n    (void)gspqsignal(SIGTTIN, SIG_DFL);\r\n    (void)gspqsignal(SIGTTOU, SIG_DFL);\r\n    (void)gspqsignal(SIGCONT, SIG_DFL);\r\n    (void)gspqsignal(SIGWINCH, SIG_DFL);\r\n\r\n    /* We allow SIGQUIT (quickdie) at all times */\r\n    (void)sigdelset(&t_thrd.libpq_cxt.BlockSig, SIGQUIT);\r\n\r\n    g_instance.heartbeat_cxt.heartbeat_running = true;\r\n\r\n    /*\r\n     * Create a resource owner to keep track of our resources.\r\n     */\r\n    t_thrd.utils_cxt.CurrentResourceOwner = ResourceOwnerCreate(NULL, \"Heartbeat\");\r\n\r\n    /*\r\n     * Create a memory context that we will do all our work in.  We do this so\r\n     * that we can reset the context during error recovery and thereby avoid\r\n     * possible memory leaks.  Formerly this code just ran in\r\n     * TopMemoryContext, but resetting that would be a really bad idea.\r\n     */\r\n    heartbeat_context = AllocSetContextCreate(\r\n        TopMemoryContext, \"Heartbeat\", ALLOCSET_DEFAULT_MINSIZE, ALLOCSET_DEFAULT_INITSIZE, ALLOCSET_DEFAULT_MAXSIZE);\r\n    (void)MemoryContextSwitchTo(heartbeat_context);\r\n\r\n    /*\r\n     * If an exception is encountered, processing resumes here.\r\n     *\r\n     * See notes in postgres.c about the design of this coding.\r\n     *\r\n     */\r\n    if (sigsetjmp(localSigjmpBuf, 1) != 0) {\r\n        heartbeat_handle_exception(heartbeat_context);\r\n    }\r\n\r\n    /* We can now handle ereport(ERROR) */\r\n    t_thrd.log_cxt.PG_exception_stack = &localSigjmpBuf;\r\n\r\n    /*\r\n     * Unblock signals (they were blocked when the postmaster forked us)\r\n     */\r\n    gs_signal_setmask(&t_thrd.libpq_cxt.UnBlockSig, NULL);\r\n    (void)gs_signal_unblock_sigusr2();\r\n\r\n    ereport(LOG, (errmsg(\"heartbeat thread started\")));\r\n    proc_exit(server_loop());\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_main"
+	},
+	"heartbeat_quick_die":{
+		"body":"static void heartbeat_quick_die(SIGNAL_ARGS)\r\n{\r\n    gs_signal_setmask(&t_thrd.libpq_cxt.BlockSig, NULL);\r\n\r\n    /*\r\n     * We DO NOT want to run proc_exit() callbacks -- we're here because\r\n     * shared memory may be corrupted, so we don't want to try to clean up our\r\n     * transaction.  Just nail the windows shut and get out of town.  Now that\r\n     * there's an atexit callback to prevent third-party code from breaking\r\n     * things by calling exit() directly, we have to reset the callbacks\r\n     * explicitly to make this work as intended.\r\n     */\r\n    on_exit_reset();\r\n\r\n    g_instance.heartbeat_cxt.heartbeat_running = false;\r\n\r\n    /*\r\n     * Note we do exit(2) not exit(0).    This is to force the postmaster into a\r\n     * system reset cycle if some idiot DBA sends a manual SIGQUIT to a random\r\n     * backend.  This is necessary precisely because we don't clean up our\r\n     * shared memory state.  (The \"dead man switch\" mechanism in pmsignal.c\r\n     * should ensure the postmaster sees this as a crash, too, but no harm in\r\n     * being doubly sure.)\r\n     */\r\n    exit(EXIT_MODE_TWO);\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_quick_die"
+	},
+	"heartbeat_shmem_init":{
+		"body":"void heartbeat_shmem_init(void)\r\n{\r\n    bool found = false;\r\n    t_thrd.heartbeat_cxt.state =\r\n        (heartbeat_state*)ShmemInitStruct(\"heatbeat Shmem Data\", heartbeat_shmem_size(), &found);\r\n    if (!found) {\r\n        errno_t rc = memset_s(t_thrd.heartbeat_cxt.state, heartbeat_shmem_size(), 0, heartbeat_shmem_size());\r\n        securec_check(rc, \"\", \"\");\r\n        SpinLockInit(&t_thrd.heartbeat_cxt.state->mutex);\r\n    }\r\n}",
+		"comment":"/* Allocate and initialize heartbeat shared memory */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_shmem_init"
+	},
+	"heartbeat_shmem_size":{
+		"body":"Size heartbeat_shmem_size(void)\r\n{\r\n    Size size = 0;\r\n    size = add_size(size, sizeof(heartbeat_state));\r\n    return size;\r\n}",
+		"comment":"/* Report shared-memory space needed by heartbeat */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_shmem_size"
+	},
+	"heartbeat_shutdown_handler":{
+		"body":"static void heartbeat_shutdown_handler(SIGNAL_ARGS)\r\n{\r\n    int save_errno = errno;\r\n\r\n    t_thrd.heartbeat_cxt.shutdown_requested = true;\r\n\r\n    if (t_thrd.proc) {\r\n        SetLatch(&t_thrd.proc->procLatch);\r\n    }\r\n\r\n    errno = save_errno;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_shutdown_handler"
+	},
+	"heartbeat_sighup_handler":{
+		"body":"static void heartbeat_sighup_handler(SIGNAL_ARGS)\r\n{\r\n    t_thrd.heartbeat_cxt.got_SIGHUP = true;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_sighup_handler"
+	},
+	"heartbeat_sigusr1_handler":{
+		"body":"static void heartbeat_sigusr1_handler(SIGNAL_ARGS)\r\n{\r\n    int save_errno = errno;\r\n\r\n    latch_sigusr1_handler();\r\n\r\n    errno = save_errno;\r\n}",
+		"comment":"/* SIGUSR1: used for latch wakeups */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"heartbeat_sigusr1_handler"
+	},
+	"server_loop":{
+		"body":"static int server_loop(void)\r\n{\r\n    TimestampTz last_send_time = 0;\r\n    sigset_t block_sig_set;\r\n    struct epoll_event events[MAX_EVENTS];\r\n    set_block_sigmask(&block_sig_set);\r\n    int epollfd = epoll_create(MAX_EVENTS);\r\n    if (epollfd < 0) {\r\n        ereport(ERROR, (errmsg(\"create epoll failed %d.\", epollfd)));\r\n        return 1;\r\n    }\r\n\r\n    if (create_client_and_server(epollfd)) {\r\n        goto OUT;\r\n    }\r\n\r\n    for (;;) {\r\n        if (deal_with_sigup()) {\r\n            break;\r\n        }\r\n\r\n        if (t_thrd.heartbeat_cxt.shutdown_requested) {\r\n            /*\r\n             * From here on, elog(ERROR) should end with exit(1), not send\r\n             * control back to the sigsetjmp block above.\r\n             */\r\n            u_sess->attr.attr_common.ExitOnAnyError = true;\r\n            g_instance.heartbeat_cxt.heartbeat_running = false;\r\n            destroy_client_and_server();\r\n            (void)close(epollfd);\r\n            proc_exit(0);\r\n        }\r\n\r\n        ereport(DEBUG2, (errmsg(\"heartbeat ...\")));\r\n        if (g_heartbeat_client && !g_heartbeat_client->IsConnect() && g_heartbeat_client->Connect()) {\r\n            /*\r\n             * The client has sent a startup packet in the Connect method,\r\n             * and the server will reply a heartbeat packet.\r\n             */\r\n            last_send_time = GetCurrentTimestamp();\r\n        }\r\n\r\n        if (deal_with_events(epollfd, events, &block_sig_set)) {\r\n            break;\r\n        }\r\n\r\n        if (g_heartbeat_client) {\r\n            /* Limit the heartbeat frequency */\r\n            delay_control(last_send_time);\r\n            if (g_heartbeat_client->IsConnect() && g_heartbeat_client->SendBeatHeartPacket()) {\r\n                last_send_time = GetCurrentTimestamp();\r\n            }\r\n        }\r\n    }\r\n\r\nOUT:\r\n    g_instance.heartbeat_cxt.heartbeat_running = false;\r\n    destroy_client_and_server();\r\n    (void)close(epollfd);\r\n    return 1;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"server_loop"
+	},
+	"set_block_sigmask":{
+		"body":"static void set_block_sigmask(sigset_t* block_signal)\r\n{\r\n    (void)sigfillset(block_signal);\r\n#ifdef SIGTRAP\r\n    (void)sigdelset(block_signal, SIGTRAP);\r\n#endif\r\n#ifdef SIGABRT\r\n    (void)sigdelset(block_signal, SIGABRT);\r\n#endif\r\n#ifdef SIGILL\r\n    (void)sigdelset(block_signal, SIGILL);\r\n#endif\r\n#ifdef SIGFPE\r\n    (void)sigdelset(block_signal, SIGFPE);\r\n#endif\r\n#ifdef SIGSEGV\r\n    (void)sigdelset(block_signal, SIGSEGV);\r\n#endif\r\n#ifdef SIGBUS\r\n    (void)sigdelset(block_signal, SIGBUS);\r\n#endif\r\n#ifdef SIGSYS\r\n    (void)sigdelset(block_signal, SIGSYS);\r\n#endif\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"set_block_sigmask"
+	},
+	"unset_events_conn":{
+		"body":"static void unset_events_conn(struct epoll_event* events, int begin, int size, HeartbeatConnection* con)\r\n{\r\n    for (int i = begin; i < size; i++) {\r\n        HeartbeatConnection* curCon = (HeartbeatConnection*)events[i].data.ptr;\r\n\r\n        if (curCon == con) {\r\n            events[i].data.ptr = NULL;\r\n        }\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat.cpp",
+		"name":"unset_events_conn"
+	}
+}

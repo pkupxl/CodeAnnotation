@@ -1,0 +1,68 @@
+{
+	"ConnCloseAndFree":{
+		"body":"void ConnCloseAndFree(HeartbeatConnection* con)\r\n{\r\n    Assert(con != NULL);\r\n    if (con == NULL) {\r\n        ereport(COMMERROR, (errmsg(\"The heartbeat connection is empty.\\n\")));\r\n        return;\r\n    }\r\n\r\n    if (con->port != NULL) {\r\n        CloseAndFreePort(con->port);\r\n        con->port = NULL;\r\n        /*\r\n         * If con->port is not NULL, the connection is not a listening connection.\r\n         * It means con->port->sock is identical with con->fd.\r\n         */\r\n        con->fd = -1;\r\n    }\r\n\r\n    if (con->fd >= 0) {\r\n        (void)close(con->fd);\r\n    }\r\n\r\n    FREE_AND_RESET(con->remoteHost);\r\n    con->fd = -1;\r\n    FREE_AND_RESET(con);\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"ConnCloseAndFree"
+	},
+	"ConnectCreate":{
+		"body":"PurePort* ConnectCreate(int serverFd)\r\n{\r\n    PurePort* port = (PurePort*)palloc0(sizeof(PurePort));\r\n    port->sock = -1;\r\n\r\n    if (StreamConnection(serverFd, port) != STATUS_OK) {\r\n        CloseAndFreePort(port);\r\n        port = NULL;\r\n    }\r\n\r\n    return port;\r\n}",
+		"comment":"/*\r\n * ConnectCreate -- create a local connection data structure\r\n */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"ConnectCreate"
+	},
+	"EventAdd":{
+		"body":"int EventAdd(int epoll_handle, int events, HeartbeatConnection* con)\r\n{\r\n    struct epoll_event epv = {0, {0}};\r\n    epv.data.ptr = con;\r\n    epv.events = con->events = events;\r\n\r\n    if (epoll_ctl(epoll_handle, EPOLL_CTL_ADD, con->fd, &epv) < 0) {\r\n        ereport(COMMERROR, (errmsg(\"Event Add failed [fd=%d], evnets[%X]: %m\", con->fd, (unsigned int)events)));\r\n        return -1;\r\n    }\r\n\r\n    return 0;\r\n}",
+		"comment":"/* Add an event to epoll */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"EventAdd"
+	},
+	"EventDel":{
+		"body":"void EventDel(int epollFd, HeartbeatConnection* con)\r\n{\r\n    struct epoll_event epv = {0, {0}};\r\n    epv.events = 0;\r\n    epv.data.ptr = con;\r\n\r\n    if (epoll_ctl(epollFd, EPOLL_CTL_DEL, con->fd, &epv) < 0) {\r\n        ereport(COMMERROR, (errmsg(\"EPOLL_CTL_DEL failed [fd=%d]: %m\", con->fd)));\r\n    }\r\n}",
+		"comment":"/* Delete an event from epoll */",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"EventDel"
+	},
+	"GetIp":{
+		"body":"static char* GetIp(struct sockaddr* addr)\r\n{\r\n    char* ip = (char*)palloc0(IP_LEN);\r\n    struct sockaddr_in* saddr = (sockaddr_in*)addr;\r\n    char* result = NULL;\r\n\r\n    if (AF_INET6 == saddr->sin_family) {\r\n        result = inet_net_ntop(AF_INET6, &saddr->sin_addr, AF_INET6_MAX_BITS, ip, IP_LEN);\r\n        if (result == NULL) {\r\n            ereport(WARNING, (errmsg(\"inet_net_ntop failed, error: %d\", EAFNOSUPPORT)));\r\n        }\r\n    } else if (AF_INET == saddr->sin_family) {\r\n        result = inet_net_ntop(AF_INET, &saddr->sin_addr, AF_INET_MAX_BITS, ip, IP_LEN);\r\n        if (result == NULL) {\r\n            ereport(WARNING, (errmsg(\"inet_net_ntop failed, error: %d\", EAFNOSUPPORT)));\r\n        }\r\n    } else {\r\n        ereport(WARNING, (errmsg(\"Unsupported sin_family: %d\", saddr->sin_family)));\r\n    }\r\n\r\n    if (result == NULL) {\r\n        pfree(ip);\r\n        ip = NULL;\r\n    }\r\n\r\n    return ip;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"GetIp"
+	},
+	"IsIpInWhiteList":{
+		"body":"static bool IsIpInWhiteList(const char* ip)\r\n{\r\n    for (int i = START_REPLNODE_NUM; i < MAX_REPLNODE_NUM; i++) {\r\n        ReplConnInfo* replconninfo = t_thrd.postmaster_cxt.ReplConnArray[i];\r\n        if (replconninfo == NULL) {\r\n            continue;\r\n        }\r\n\r\n        if (strncmp((char*)replconninfo->remotehost, ip, IP_LEN) == 0) {\r\n            return true;\r\n        }\r\n    }\r\n    return false;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"IsIpInWhiteList"
+	},
+	"MakeConnection":{
+		"body":"HeartbeatConnection* MakeConnection(int fd, PurePort* port)\r\n{\r\n    HeartbeatConnection* con = (HeartbeatConnection*)palloc0(sizeof(HeartbeatConnection));\r\n\r\n    /* The port is NULL for listen fd */\r\n    if (port != NULL) {\r\n        con->remoteHost = GetIp((struct sockaddr*)&port->raddr.addr);\r\n        if (con->remoteHost == NULL) {\r\n            FREE_AND_RESET(con);\r\n            ereport(COMMERROR, (errmsg(\"Get the remote host ip failed.\\n\")));\r\n            return NULL;\r\n        }\r\n\r\n        if (!IsIpInWhiteList(con->remoteHost)) {\r\n            ereport(COMMERROR, (errmsg(\"Illegal remote ip: %s.\\n\", con->remoteHost)));\r\n            FREE_AND_RESET(con);\r\n            return NULL;\r\n        }\r\n    }\r\n\r\n    con->fd = fd;\r\n    con->port = port;\r\n    con->channelIdentifier = INVALID_CHANNEL_ID;\r\n    con->lastActiveTime = GetCurrentTimestamp();\r\n\r\n    return con;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"MakeConnection"
+	},
+	"RemoveConn":{
+		"body":"void RemoveConn(HeartbeatConnection* con)\r\n{\r\n    if (con != NULL) {\r\n        EventDel(con->epHandle, con);\r\n        ConnCloseAndFree(con);\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"RemoveConn"
+	},
+	"SendHeartbeatPacket":{
+		"body":"bool SendHeartbeatPacket(const HeartbeatConnection* con)\r\n{\r\n    HeartbeatPacket packet;\r\n    packet.sendTime = GetCurrentTimestamp();\r\n\r\n    return SendPacket(con, (char*)(&packet), sizeof(HeartbeatPacket));\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"SendHeartbeatPacket"
+	},
+	"SendPacket":{
+		"body":"bool SendPacket(const HeartbeatConnection* con, const char* buf, size_t len)\r\n{\r\n    int ret = 0;\r\n\r\n    if ((ret = pq_putbytes(con->port, buf, len)) != 0) {\r\n        ereport(COMMERROR, (errmsg(\"pq_putbytes failed, return ret=%d\", ret)));\r\n        return false;\r\n    }\r\n\r\n    if ((ret = pq_flush(con->port)) != 0) {\r\n        ereport(COMMERROR, (errmsg(\"pq_flush failed, return ret=%d\", ret)));\r\n        return false;\r\n    }\r\n    return true;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"SendPacket"
+	},
+	"UpdateLastHeartbeatTime":{
+		"body":"void UpdateLastHeartbeatTime(const char* remoteHost, int remotePort, TimestampTz timestamp)\r\n{\r\n    volatile heartbeat_state* stat = t_thrd.heartbeat_cxt.state;\r\n\r\n    SpinLockAcquire(&stat->mutex);\r\n    for (int i = 1; i < MAX_REPLNODE_NUM; i++) {\r\n        ReplConnInfo* replconninfo = t_thrd.postmaster_cxt.ReplConnArray[i];\r\n\r\n        if (strncmp((char*)replconninfo->remotehost, (char*)remoteHost, IP_LEN) == 0 &&\r\n            replconninfo->remoteheartbeatport == remotePort) {\r\n            stat->channel_array[i].last_reply_timestamp = timestamp;\r\n            ereport(DEBUG2,\r\n                (errmsg(\"Update last heartbeat  time： remotehost:%s, port:%d, time:%ld\",\r\n                    remoteHost,\r\n                    remotePort,\r\n                    timestamp)));\r\n            SpinLockRelease(&stat->mutex);\r\n            return;\r\n        }\r\n    }\r\n    SpinLockRelease(&stat->mutex);\r\n    ereport(COMMERROR, (errmsg(\"Can't find channel, remote host:%s, remote port:%d\", remoteHost, remotePort)));\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\heartbeat\\heartbeat_conn.cpp",
+		"name":"UpdateLastHeartbeatTime"
+	}
+}

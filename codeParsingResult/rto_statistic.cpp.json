@@ -1,0 +1,26 @@
+{
+	"GetRTOStat":{
+		"body":"RTOStandbyData* GetRTOStat(uint32* num)\r\n{\r\n    RTOStandbyData* result =\r\n        (RTOStandbyData*)palloc((int64)(g_instance.attr.attr_storage.max_wal_senders) * sizeof(RTOStandbyData));\r\n    int i;\r\n    int rc;\r\n    int readWalSnd = 0;\r\n\r\n    for (i = 0; i < g_instance.attr.attr_storage.max_wal_senders; i++) {\r\n        if (g_instance.rto_cxt.rto_standby_data[i].id[0] != 0) {\r\n            readWalSnd++;\r\n            char* standby_names = (char*)(result[readWalSnd - 1].id);\r\n            rc = strncpy_s(standby_names,\r\n                STANDBY_NAME_SIZE,\r\n                g_instance.rto_cxt.rto_standby_data[i].id,\r\n                strlen(g_instance.rto_cxt.rto_standby_data[i].id));\r\n            securec_check(rc, \"\", \"\");\r\n\r\n            char* local_ip = (char*)(result[readWalSnd - 1].source_ip);\r\n            rc = strncpy_s(local_ip,\r\n                IP_LEN,\r\n                g_instance.rto_cxt.rto_standby_data[i].source_ip,\r\n                strlen(g_instance.rto_cxt.rto_standby_data[i].source_ip));\r\n            securec_check(rc, \"\", \"\");\r\n            result[readWalSnd - 1].source_port = g_instance.rto_cxt.rto_standby_data[i].source_port;\r\n\r\n            char* remote_ip = (char*)(result[readWalSnd - 1].dest_ip);\r\n            rc = strncpy_s(remote_ip,\r\n                IP_LEN,\r\n                g_instance.rto_cxt.rto_standby_data[i].dest_ip,\r\n                strlen(g_instance.rto_cxt.rto_standby_data[i].dest_ip));\r\n            securec_check(rc, \"\", \"\");\r\n\r\n            result[readWalSnd - 1].dest_port = g_instance.rto_cxt.rto_standby_data[i].dest_port;\r\n\r\n            result[readWalSnd - 1].current_rto = g_instance.rto_cxt.rto_standby_data[i].current_rto;\r\n            result[readWalSnd - 1].current_sleep_time = g_instance.rto_cxt.rto_standby_data[i].current_sleep_time;\r\n            result[readWalSnd - 1].target_rto = g_instance.rto_cxt.rto_standby_data[i].target_rto;\r\n        }\r\n    }\r\n\r\n    *num = readWalSnd;\r\n    return result;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\rto_statistic.cpp",
+		"name":"GetRTOStat"
+	},
+	"node_name":{
+		"body":"Datum node_name()\r\n{\r\n    return CStringGetTextDatum(g_instance.attr.attr_common.PGXCNodeName);\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\rto_statistic.cpp",
+		"name":"node_name"
+	},
+	"rto_get_standby_info":{
+		"body":"Datum rto_get_standby_info()\r\n{\r\n    Datum value;\r\n    char* info = (char*)palloc0(sizeof(char) * RTO_INFO_BUFFER_SIZE);\r\n    rto_get_standby_info_text(info, RTO_INFO_BUFFER_SIZE);\r\n    value = CStringGetTextDatum(info);\r\n    pfree_ext(info);\r\n    return value;\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\rto_statistic.cpp",
+		"name":"rto_get_standby_info"
+	},
+	"rto_get_standby_info_text":{
+		"body":"void rto_get_standby_info_text(char* info, uint32 max_info_len)\r\n{\r\n    errno_t errorno;\r\n    bool show_line = false;\r\n    errorno = snprintf_s(info,\r\n        max_info_len,\r\n        max_info_len - 1,\r\n        \"%-30s%-20s%-20s%-20s\",\r\n        \"standby_node_name\",\r\n        \"current_rto\",\r\n        \"target_rto\",\r\n        \"current_sleep_time\");\r\n    securec_check_ss(errorno, \"\", \"\");\r\n\r\n    for (int i = 0; i < g_instance.attr.attr_storage.max_wal_senders; ++i) {\r\n        if (strlen(g_instance.rto_cxt.rto_standby_data[i].id) == 0) {\r\n            if (show_line == false) {\r\n                errorno = snprintf_s(info + strlen(info),\r\n                    max_info_len - strlen(info),\r\n                    max_info_len - strlen(info) - 1,\r\n                    \"\\n%-30s%-20s%-20s%-20s\",\r\n                    \"\",\r\n                    \"\",\r\n                    \"\",\r\n                    \"\");\r\n                securec_check_ss(errorno, \"\", \"\");\r\n                show_line = true;\r\n            }\r\n            continue;\r\n        }\r\n\r\n        errorno = snprintf_s(info + strlen(info),\r\n            max_info_len - strlen(info),\r\n            max_info_len - strlen(info) - 1,\r\n            \"\\n%-30s%-20lu%-20u%-20lu\",\r\n            g_instance.rto_cxt.rto_standby_data[i].id,\r\n            g_instance.rto_cxt.rto_standby_data[i].current_rto,\r\n            g_instance.rto_cxt.rto_standby_data[i].target_rto,\r\n            g_instance.rto_cxt.rto_standby_data[i].current_sleep_time);\r\n        securec_check_ss(errorno, \"\", \"\");\r\n        show_line = true;\r\n    }\r\n}",
+		"comment":"",
+		"filename":"D:\\标注竞赛\\openGauss-server\\src\\gausskernel\\storage\\replication\\rto_statistic.cpp",
+		"name":"rto_get_standby_info_text"
+	}
+}
